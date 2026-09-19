@@ -21,8 +21,8 @@ capture:
 model:
   path: "models/best.pt"
   confidence: 0.05
-  # gốc 0.40, gốc 240
-  imgsz: 256
+  # gốc 0.40, gốc 256
+  imgsz: 640
   bite_classes:
     - "exclamation-mark"
 

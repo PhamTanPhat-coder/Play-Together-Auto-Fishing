@@ -19,9 +19,18 @@ from autofishing.capture.screen import ScreenCapture
 from autofishing.config import BotSettings
 from autofishing.constants import UI_CLASSES
 from autofishing.detection.detector import Detection, YoloDetector
-from autofishing.input.clickers import BlueStacksClicker, ScreenClicker
-from autofishing.monitor import FishingStatusMonitor, StatusSnapshot
-from autofishing.protocols import Clicker, FrameSource
+from autofishing.input.clickers import (
+    BlueStacksClicker,
+    ScreenClicker,
+)
+from autofishing.monitor import (
+    FishingStatusMonitor,
+    StatusSnapshot,
+)
+from autofishing.protocols import (
+    Clicker,
+    FrameSource,
+)
 
 
 class BotState(enum.Enum):
@@ -78,8 +87,11 @@ class _BiteDebugWindow:
 
         self._image_error_reported = False
 
+    # =========================================================
+    # START
+    # =========================================================
+
     def start(self) -> None:
-        """Khởi động cửa sổ debug."""
         if self._started_once:
             return
 
@@ -87,16 +99,23 @@ class _BiteDebugWindow:
 
         self._thread.start()
 
-        self._started.wait(timeout=3.0)
+        self._started.wait(
+            timeout=3.0
+        )
+
+    # =========================================================
+    # UPDATE IMAGE
+    # =========================================================
 
     def update(
         self,
         frame,
         bite: Detection | None,
     ) -> None:
-        """Nhận frame mới và tạo PNG tạm."""
-
         if self._closed_by_user:
+            return
+
+        if self._stop_event.is_set():
             return
 
         now = time.monotonic()
@@ -113,7 +132,6 @@ class _BiteDebugWindow:
 
         h, w = debug_frame.shape[:2]
 
-        # Viền ROI.
         cv2.rectangle(
             debug_frame,
             (0, 0),
@@ -122,7 +140,6 @@ class _BiteDebugWindow:
             2,
         )
 
-        # Tâm ROI.
         center_x = w // 2
         center_y = h // 2
 
@@ -142,7 +159,6 @@ class _BiteDebugWindow:
             1,
         )
 
-        # Kích thước ROI.
         cv2.putText(
             debug_frame,
             f"ROI: {w} x {h}",
@@ -154,12 +170,17 @@ class _BiteDebugWindow:
             cv2.LINE_AA,
         )
 
-        # Thông tin detection.
         if bite is not None:
             cv2.rectangle(
                 debug_frame,
-                (bite.x1, bite.y1),
-                (bite.x2, bite.y2),
+                (
+                    bite.x1,
+                    bite.y1,
+                ),
+                (
+                    bite.x2,
+                    bite.y2,
+                ),
                 (0, 0, 255),
                 2,
             )
@@ -198,7 +219,6 @@ class _BiteDebugWindow:
                 cv2.LINE_AA,
             )
 
-        # Resize về kích thước cửa sổ.
         display = cv2.resize(
             debug_frame,
             (
@@ -208,7 +228,6 @@ class _BiteDebugWindow:
             interpolation=cv2.INTER_AREA,
         )
 
-        # Encode PNG.
         ok, encoded = cv2.imencode(
             ".png",
             display,
@@ -219,7 +238,10 @@ class _BiteDebugWindow:
 
         png_bytes = encoded.tobytes()
 
-        # Tạo file PNG tạm.
+        # -----------------------------------------------------
+        # GHI FILE PNG TẠM
+        # -----------------------------------------------------
+
         try:
             fd, file_path = tempfile.mkstemp(
                 suffix=".png",
@@ -233,7 +255,9 @@ class _BiteDebugWindow:
                 file_path,
                 "wb",
             ) as file:
-                file.write(png_bytes)
+                file.write(
+                    png_bytes
+                )
 
         except Exception as exc:
             if not self._image_error_reported:
@@ -246,7 +270,10 @@ class _BiteDebugWindow:
 
             return
 
-        # Xóa frame cũ khỏi queue.
+        # -----------------------------------------------------
+        # CHỈ GIỮ FRAME MỚI NHẤT
+        # -----------------------------------------------------
+
         try:
             while True:
                 old_path = (
@@ -254,14 +281,15 @@ class _BiteDebugWindow:
                 )
 
                 try:
-                    os.remove(old_path)
+                    os.remove(
+                        old_path
+                    )
                 except OSError:
                     pass
 
         except queue.Empty:
             pass
 
-        # Đưa frame mới nhất vào queue.
         try:
             self._queue.put_nowait(
                 file_path
@@ -269,25 +297,31 @@ class _BiteDebugWindow:
 
         except queue.Full:
             try:
-                os.remove(file_path)
+                os.remove(
+                    file_path
+                )
             except OSError:
                 pass
 
+    # =========================================================
+    # CLOSE
+    # =========================================================
+
     def close(self) -> None:
-        """Đóng cửa sổ debug."""
+        """
+        Chỉ set Event.
+
+        Không gọi root.after() hoặc bất kỳ Tkinter API nào
+        từ thread bot.
+
+        Chính thread Tkinter sẽ tự phát hiện Event và destroy.
+        """
 
         self._stop_event.set()
 
-        root = self._root
-
-        if root is not None:
-            try:
-                root.after(
-                    0,
-                    root.destroy,
-                )
-            except Exception:
-                pass
+    # =========================================================
+    # TK THREAD
+    # =========================================================
 
     def _run(self) -> None:
         try:
@@ -371,15 +405,27 @@ class _BiteDebugWindow:
             self._label = None
             self._hwnd = None
 
-    def _pump_frame(self) -> None:
-        """Đọc PNG mới nhất và hiển thị."""
+    # =========================================================
+    # PUMP FRAME
+    # =========================================================
 
+    def _pump_frame(self) -> None:
         root = self._root
 
         if root is None:
             return
 
+        # -----------------------------------------------------
+        # Bot thread chỉ set Event.
+        # Tk thread tự destroy ở đây.
+        # -----------------------------------------------------
+
         if self._stop_event.is_set():
+            try:
+                root.destroy()
+            except Exception:
+                pass
+
             return
 
         latest_path: str | None = None
@@ -432,15 +478,22 @@ class _BiteDebugWindow:
             self._pump_frame,
         )
 
-    def _keep_topmost(self) -> None:
-        """Giữ cửa sổ luôn nằm trên BlueStacks."""
+    # =========================================================
+    # KEEP TOPMOST
+    # =========================================================
 
+    def _keep_topmost(self) -> None:
         root = self._root
 
         if root is None:
             return
 
         if self._stop_event.is_set():
+            try:
+                root.destroy()
+            except Exception:
+                pass
+
             return
 
         self._make_topmost()
@@ -450,6 +503,10 @@ class _BiteDebugWindow:
             200,
             self._keep_topmost,
         )
+
+    # =========================================================
+    # WINDOWS TOPMOST
+    # =========================================================
 
     def _make_topmost(self) -> None:
         if not self._hwnd:
@@ -496,6 +553,10 @@ class _BiteDebugWindow:
         except Exception:
             pass
 
+    # =========================================================
+    # USER CLOSE
+    # =========================================================
+
     def _on_user_close(self) -> None:
         self._closed_by_user = True
 
@@ -505,6 +566,10 @@ class _BiteDebugWindow:
 
         if root is not None:
             root.destroy()
+
+    # =========================================================
+    # CLEAN TEMP FILES
+    # =========================================================
 
     def _cleanup_temp_files(self) -> None:
         try:
@@ -539,6 +604,7 @@ class FishingBot:
         detector: YoloDetector,
         config: BotSettings,
         clicker: Clicker | None = None,
+        monitor: FishingStatusMonitor | None = None,
     ) -> None:
         self.capture = capture
         self.detector = detector
@@ -548,6 +614,32 @@ class FishingBot:
             clicker
             or ScreenClicker()
         )
+
+        # =====================================================
+        # MONITOR OWNERSHIP
+        # =====================================================
+        #
+        # Nếu BotController truyền Monitor vào:
+        #
+        #     monitor=monitor
+        #
+        # thì FishingBot KHÔNG được đóng Monitor.
+        #
+        # Điều này rất quan trọng khi RESTART.
+        #
+        # Bot cũ chết -> Monitor vẫn còn -> Bot mới dùng lại.
+        #
+
+        if monitor is None:
+            self._monitor = (
+                FishingStatusMonitor()
+            )
+
+            self._owns_monitor = True
+
+        else:
+            self._monitor = monitor
+            self._owns_monitor = False
 
         self.state = (
             BotState.CAST
@@ -561,14 +653,16 @@ class FishingBot:
 
         self._running = False
 
+        self._paused = False
+        self._pause_started_at: float | None = None
+
         self._last_repair_click_at = 0.0
         self._repair_opened_bag = False
         self._too_late_seen_at: float | None = None
 
-        # Monitoring.
-        self._monitor = (
-            FishingStatusMonitor()
-        )
+        # =====================================================
+        # THỐNG KÊ
+        # =====================================================
 
         self._session_started_at = (
             time.monotonic()
@@ -584,12 +678,12 @@ class FishingBot:
         self._last_conf: float | None = None
         self._last_event = "Khởi động"
 
-        # -----------------------------------------------------
-        # Đảm bảo một lượt câu chỉ ghi nhận hụt 1 lần.
-        # -----------------------------------------------------
         self._miss_recorded_for_cast = False
 
-        # Debug window.
+        # =====================================================
+        # DEBUG WINDOW
+        # =====================================================
+
         self._debug_window_enabled = True
 
         self._debug_window = (
@@ -597,18 +691,204 @@ class FishingBot:
         )
 
     # =========================================================
-    # STATE LABEL
+    # CONTROL
     # =========================================================
 
-    def _state_label(self) -> str:
-        return _STATE_LABELS.get(
-            self.state,
-            self.state.value,
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def pause(self) -> bool:
+        if not self._running:
+            return False
+
+        if self._paused:
+            return True
+
+        self._paused = True
+
+        self._pause_started_at = (
+            time.monotonic()
         )
+
+        self._event(
+            "ĐÃ TẠM DỪNG BOT"
+        )
+
+        return True
+
+    def resume(self) -> bool:
+        if not self._running:
+            return False
+
+        if not self._paused:
+            return False
+
+        now = time.monotonic()
+
+        if self._pause_started_at is not None:
+            paused_duration = (
+                now
+                - self._pause_started_at
+            )
+
+            self._state_entered_at += (
+                paused_duration
+            )
+
+        self._paused = False
+        self._pause_started_at = None
+
+        self._event(
+            "ĐÃ TIẾP TỤC BOT"
+        )
+
+        return True
+
+    def toggle_pause(self) -> bool:
+        if self._paused:
+            return self.resume()
+
+        return self.pause()
+
+    def reset_stats(self) -> None:
+        self._casts = 0
+        self._caught = 0
+        self._missed = 0
+        self._no_detect = 0
+        self._bites = 0
+        self._fallback_store = 0
+
+        self._last_conf = None
+
+        self._session_started_at = (
+            time.monotonic()
+        )
+
+        self._miss_recorded_for_cast = False
+
+        self._event(
+            "ĐÃ ĐẶT LẠI SỐ LIỆU"
+        )
+
+    def export_statistics(
+        self,
+    ) -> dict[str, float | int | None]:
+        return {
+            "casts": self._casts,
+            "caught": self._caught,
+            "missed": self._missed,
+            "no_detect": self._no_detect,
+            "bites": self._bites,
+            "fallback_store": self._fallback_store,
+            "last_conf": self._last_conf,
+            "started_at": self._session_started_at,
+        }
+
+    def restore_statistics(
+        self,
+        stats: dict[str, float | int | None],
+    ) -> None:
+        self._casts = int(
+            stats.get(
+                "casts",
+                0,
+            )
+            or 0
+        )
+
+        self._caught = int(
+            stats.get(
+                "caught",
+                0,
+            )
+            or 0
+        )
+
+        self._missed = int(
+            stats.get(
+                "missed",
+                0,
+            )
+            or 0
+        )
+
+        self._no_detect = int(
+            stats.get(
+                "no_detect",
+                0,
+            )
+            or 0
+        )
+
+        self._bites = int(
+            stats.get(
+                "bites",
+                0,
+            )
+            or 0
+        )
+
+        self._fallback_store = int(
+            stats.get(
+                "fallback_store",
+                0,
+            )
+            or 0
+        )
+
+        last_conf = stats.get(
+            "last_conf"
+        )
+
+        self._last_conf = (
+            float(last_conf)
+            if last_conf is not None
+            else None
+        )
+
+        started_at = stats.get(
+            "started_at"
+        )
+
+        if started_at is not None:
+            self._session_started_at = float(
+                started_at
+            )
+
+    def stop(self) -> None:
+        """
+        Dừng bot hiện tại.
+
+        Không đóng Monitor ở đây.
+        Monitor được BotController dùng chung
+        và phải sống qua thao tác RESTART.
+        """
+
+        self._running = False
+        self._paused = False
+        self._pause_started_at = None
 
     # =========================================================
     # STATUS
     # =========================================================
+
+    def _state_label(self) -> str:
+        label = _STATE_LABELS.get(
+            self.state,
+            self.state.value,
+        )
+
+        if self._paused:
+            return (
+                f"TẠM DỪNG - {label}"
+            )
+
+        return label
 
     def _publish_status(self) -> None:
         self._monitor.publish(
@@ -642,6 +922,13 @@ class FishingBot:
 
         self._publish_status()
 
+        try:
+            self._monitor.log_event(
+                message
+            )
+        except Exception:
+            pass
+
     # =========================================================
     # RECORD MISS
     # =========================================================
@@ -650,16 +937,6 @@ class FishingBot:
         self,
         reason: str,
     ) -> bool:
-        """
-        Ghi nhận 1 lượt câu hụt.
-
-        Trả về:
-            True  = vừa ghi nhận hụt.
-            False = lượt này đã được ghi hụt trước đó.
-
-        Nhờ đó một lượt câu không thể bị cộng hụt 2 lần.
-        """
-
         if self._miss_recorded_for_cast:
             return False
 
@@ -702,6 +979,17 @@ class FishingBot:
         if state == BotState.REPAIR:
             self._repair_opened_bag = False
             self._last_repair_click_at = 0.0
+
+        if state == BotState.WAITING_BITE:
+            self._last_ui_scan = -1
+            self._last_hb = -1
+
+        elif state == BotState.AFTER_CATCH:
+            self._last_ac = -1
+
+        elif state == BotState.REPAIR:
+            self._last_rp = -1
+            self._last_bag_warn = -1
 
         print(
             f"[bot] state -> {state.value}"
@@ -832,8 +1120,10 @@ class FishingBot:
             and self.capture.region.width
         ):
             return (
-                x + self.capture.region.left,
-                y + self.capture.region.top,
+                x
+                + self.capture.region.left,
+                y
+                + self.capture.region.top,
             )
 
         if (
@@ -844,8 +1134,10 @@ class FishingBot:
             )
         ):
             return (
-                x + self.capture.region.left,
-                y + self.capture.region.top,
+                x
+                + self.capture.region.left,
+                y
+                + self.capture.region.top,
             )
 
         return x, y
@@ -1008,11 +1300,6 @@ class FishingBot:
 
             return
 
-        # -----------------------------------------------------
-        # Bắt đầu một lượt câu mới.
-        # Reset cờ hụt của lượt trước.
-        # -----------------------------------------------------
-
         self._miss_recorded_for_cast = False
 
         self._do(
@@ -1059,10 +1346,12 @@ class FishingBot:
     # =========================================================
 
     def _tick_waiting_bite(self) -> None:
-        # 45 giây timeout.
         if self._elapsed_ms() >= 45000:
+            self._no_detect += 1
+
             self._event(
-                "45s chưa thấy ! → reset vòng câu"
+                "Không thấy ! >45s → "
+                "bắt đầu lại vòng câu"
             )
 
             self._set_state(
@@ -1071,16 +1360,11 @@ class FishingBot:
 
             return
 
-        # Không detect trước thời gian quy định.
         if (
             self._elapsed_ms()
             < self.config.min_wait_before_bite_ms
         ):
             return
-
-        # -----------------------------------------------------
-        # Scan UI mỗi 1.5 giây.
-        # -----------------------------------------------------
 
         current_ui_scan = int(
             self._elapsed_ms()
@@ -1107,15 +1391,11 @@ class FishingBot:
                 ui_frame
             )
 
-            # -------------------------------------------------
-            # Repair
-            # -------------------------------------------------
-
             if self._ui_requests_repair(
                 ui
             ):
                 self._event(
-                    "Phát hiện giao diện sửa "
+                    "Phát hiện giao diện sửa cần "
                     "khi đang chờ cá"
                 )
 
@@ -1124,10 +1404,6 @@ class FishingBot:
                 )
 
                 return
-
-            # -------------------------------------------------
-            # Too late trước reel
-            # -------------------------------------------------
 
             if (
                 "too-late-run-away"
@@ -1143,10 +1419,6 @@ class FishingBot:
                 )
 
                 return
-
-            # -------------------------------------------------
-            # Store còn sót lại
-            # -------------------------------------------------
 
             if (
                 "store-button"
@@ -1173,7 +1445,7 @@ class FishingBot:
                 return
 
         # -----------------------------------------------------
-        # Capture ROI.
+        # YOLO BITE DETECTION
         # -----------------------------------------------------
 
         t0 = time.perf_counter()
@@ -1183,10 +1455,6 @@ class FishingBot:
         )
 
         t1 = time.perf_counter()
-
-        # -----------------------------------------------------
-        # YOLO.
-        # -----------------------------------------------------
 
         bite = self.detector.find_bite(
             frame
@@ -1202,18 +1470,10 @@ class FishingBot:
             t2 - t1
         ) * 1000
 
-        # -----------------------------------------------------
-        # Debug window.
-        # -----------------------------------------------------
-
         self._show_bite_debug(
             frame,
             bite,
         )
-
-        # -----------------------------------------------------
-        # Không thấy !
-        # -----------------------------------------------------
 
         if bite is None:
             heartbeat = int(
@@ -1241,7 +1501,7 @@ class FishingBot:
             return
 
         # -----------------------------------------------------
-        # Phát hiện !
+        # CÓ CẮN
         # -----------------------------------------------------
 
         self._bites += 1
@@ -1258,10 +1518,6 @@ class FishingBot:
             f"grab={grab_ms:.0f}ms "
             f"infer={infer_ms:.0f}ms"
         )
-
-        # -----------------------------------------------------
-        # Reel.
-        # -----------------------------------------------------
 
         if self.config.click_on_detection:
             cx, cy = (
@@ -1313,7 +1569,7 @@ class FishingBot:
         )
 
         # -----------------------------------------------------
-        # Bắt được cá
+        # BẮT ĐƯỢC CÁ
         # -----------------------------------------------------
 
         if (
@@ -1340,7 +1596,7 @@ class FishingBot:
             return
 
         # -----------------------------------------------------
-        # Repair
+        # CẦN SỬA
         # -----------------------------------------------------
 
         if self._ui_requests_repair(
@@ -1358,7 +1614,7 @@ class FishingBot:
             return
 
         # -----------------------------------------------------
-        # Too late sau khi reel
+        # TOO LATE
         # -----------------------------------------------------
 
         if (
@@ -1385,15 +1641,7 @@ class FishingBot:
             return
 
         # -----------------------------------------------------
-        # Timeout popup.
-        #
-        # Đây là trường hợp:
-        # - đã reel
-        # - không thấy Store
-        # - không thấy too-late
-        #
-        # Ta tính 1 lượt hụt/không xác nhận.
-        # Sau đó vẫn Store fallback.
+        # TIMEOUT
         # -----------------------------------------------------
 
         if (
@@ -1409,7 +1657,7 @@ class FishingBot:
             self._fallback_store += 1
 
             self._event(
-                f"Store fallback "
+                f"Store dự phòng "
                 f"({self.config.store_x},"
                 f"{self.config.store_y})"
             )
@@ -1427,10 +1675,6 @@ class FishingBot:
             )
 
             return
-
-        # -----------------------------------------------------
-        # Heartbeat.
-        # -----------------------------------------------------
 
         heartbeat = int(
             self._elapsed_ms()
@@ -1467,7 +1711,8 @@ class FishingBot:
             >= self.config.repair_timeout_ms
         ):
             self._event(
-                "Sửa cần timeout → cooldown"
+                "Sửa cần quá thời gian → "
+                "bắt đầu lại"
             )
 
             self._set_state(
@@ -1484,7 +1729,10 @@ class FishingBot:
             frame
         )
 
-        # Repair done.
+        # -----------------------------------------------------
+        # ĐÃ SỬA XONG
+        # -----------------------------------------------------
+
         if (
             "repair-done-button"
             in ui
@@ -1510,7 +1758,10 @@ class FishingBot:
 
             return
 
-        # Paid repair.
+        # -----------------------------------------------------
+        # PAID REPAIR
+        # -----------------------------------------------------
+
         if (
             "paid-repair-button"
             in ui
@@ -1518,7 +1769,7 @@ class FishingBot:
         ):
             if not self.config.allow_paid_repair:
                 self._event(
-                    "Paid repair bị chặn"
+                    "Đã chặn sửa bằng tiền"
                 )
 
                 self._set_state(
@@ -1537,7 +1788,10 @@ class FishingBot:
 
             return
 
-        # Repair button.
+        # -----------------------------------------------------
+        # NÚT SỬA
+        # -----------------------------------------------------
+
         if (
             "repair-button"
             in ui
@@ -1553,7 +1807,10 @@ class FishingBot:
 
             return
 
-        # Tool tab.
+        # -----------------------------------------------------
+        # TAB DỤNG CỤ
+        # -----------------------------------------------------
+
         if (
             "tool-tab"
             in ui
@@ -1570,7 +1827,10 @@ class FishingBot:
 
             return
 
-        # Open bag.
+        # -----------------------------------------------------
+        # MỞ BALO
+        # -----------------------------------------------------
+
         if (
             not self._repair_opened_bag
             and self._can_repair_click()
@@ -1608,15 +1868,12 @@ class FishingBot:
                 )
 
                 self._event(
-                    "Chưa set bag_x/bag_y "
-                    "trong config.yaml "
-                    "(python main.py --pick "
-                    "trên icon balo)"
+                    "Chưa có bag_x/bag_y "
+                    "trong config.yaml"
                 )
 
             return
 
-        # Heartbeat repair.
         heartbeat = int(
             self._elapsed_ms()
             / 2000
@@ -1647,6 +1904,10 @@ class FishingBot:
     # =========================================================
 
     def tick(self) -> None:
+        if self._paused:
+            time.sleep(0.05)
+            return
+
         if self.state == BotState.CAST:
             self._tick_cast()
 
@@ -1669,11 +1930,16 @@ class FishingBot:
     def run(self) -> None:
         self._running = True
 
+        # Monitor có thể là Monitor dùng chung từ Controller.
+        # start() hiện không tạo thread Tk nữa nên an toàn.
         self._monitor.start()
 
         self._publish_status()
 
-        # Mở cửa sổ debug.
+        # -----------------------------------------------------
+        # DEBUG WINDOW
+        # -----------------------------------------------------
+
         if self._debug_window_enabled:
             try:
                 self._debug_window.start()
@@ -1718,17 +1984,65 @@ class FishingBot:
             )
 
         finally:
+            # =================================================
+            # QUAN TRỌNG NHẤT
+            # =================================================
+            #
+            # Bot hiện tại chỉ dọn dẹp tài nguyên của chính nó.
+            #
+            # Monitor KHÔNG được đóng nếu nó thuộc Controller.
+            #
+            # Vì vậy:
+            #
+            # RESTART:
+            # Bot #1 -> dừng
+            # Bot #1 -> đóng capture
+            # Bot #1 -> đóng debug window
+            # Monitor -> vẫn sống
+            # Bot #2 -> được tạo
+            #
+            # =================================================
+
             self._running = False
+            self._paused = False
+            self._pause_started_at = None
 
-            self._monitor.close()
+            # -------------------------------------------------
+            # Đóng capture
+            # -------------------------------------------------
 
-            self.capture.close()
+            try:
+                self.capture.close()
 
-            self._debug_window.close()
+            except Exception as exc:
+                print(
+                    "[bot] capture close error: "
+                    f"{exc}"
+                )
 
-    # =========================================================
-    # STOP
-    # =========================================================
+            # -------------------------------------------------
+            # Đóng cửa sổ debug
+            # -------------------------------------------------
 
-    def stop(self) -> None:
-        self._running = False
+            try:
+                self._debug_window.close()
+
+            except Exception as exc:
+                print(
+                    "[bot] debug window close error: "
+                    f"{exc}"
+                )
+
+            # -------------------------------------------------
+            # CHỈ bot sở hữu Monitor mới được đóng Monitor
+            # -------------------------------------------------
+
+            if self._owns_monitor:
+                try:
+                    self._monitor.close()
+
+                except Exception as exc:
+                    print(
+                        "[bot] monitor close error: "
+                        f"{exc}"
+                    )
