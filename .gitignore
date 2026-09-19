@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.pt
+*.onnx
+datasets/*/
+!datasets/.gitkeep
+datasets/*.png
+datasets/*.jpg
+datasets/*.jpeg
+runs/
+*.zip

@@ -1,0 +1,66 @@
+# Play Together auto fishing config
+# window = chụp cửa sổ BlueStacks (nhanh) + click Windows
+# adb    = screencap ADB (chậm hơn, dùng khi pick/tọa độ)
+
+backend: window
+
+adb:
+  serial: "127.0.0.1:5555"
+  path: "C:/Program Files/BlueStacks_nxt/HD-Adb.exe"
+
+capture:
+  # Kích thước logic = tọa độ --pick / cast / reel (thường 1600x900)
+  image_width: 1600
+  image_height: 900
+  # ROI quanh đầu nhân vật (chỗ hiện !) — chỉ crop vùng này khi detect bite
+  top: 400
+  left: 550
+  width: 500
+  height: 300
+
+model:
+  path: "models/best.pt"
+  confidence: 0.05
+  # gốc 0.40, gốc 240
+  imgsz: 256
+  bite_classes:
+    - "exclamation-mark"
+
+bot:
+  poll_interval_ms: 0
+  click_delay_ms: 0
+  cast_delay_ms: 400
+  after_catch_min_ms: 300 # chờ animation rồi mới quét popup
+  after_catch_timeout_ms: 12000 # hết hạn → fallback store_x/y
+  cooldown_after_bite_ms: 1200
+  min_wait_before_bite_ms: 0
+
+  # Sửa cần
+  allow_paid_repair: true
+  repair_timeout_ms: 25000
+  repair_click_gap_ms: 700
+  # Icon balo (mở túi để sửa cần)
+  bag_x: 1537
+  bag_y: 500
+  # Pick icon balo đỏ (góc phải) nếu chưa set — cần để tự sửa:
+  # bag_x: 1500
+  # bag_y: 180
+
+  ui_imgsz: 416
+  ui_confidence: 0.35
+  #gốc 0.35
+  auto_cast: true
+  cast_mode: tap
+  jerk_mode: tap
+  store_mode: tap
+  action_mode: tap
+  action_key: space
+
+  cast_x: 1268
+  cast_y: 541
+  reel_x: 1405
+  reel_y: 695
+  store_x: 1153
+  store_y: 769
+  click_on_detection: false
+#./.venv/Scripts/python.exe main.py

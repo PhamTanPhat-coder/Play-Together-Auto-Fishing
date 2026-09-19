@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 10
+names: ['exclamation-mark', 'paid-repair-button', 'paid-repair-text', 'repair-button', 'repair-done-button', 'repair-done-text', 'store-button', 'too-late-run-away', 'tool-is-broken', 'tool-tab']
+
+roboflow:
+  workspace: rick-hsu-nv7rx
+  project: play-together2
+  version: 3
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/rick-hsu-nv7rx/play-together2/dataset/3
