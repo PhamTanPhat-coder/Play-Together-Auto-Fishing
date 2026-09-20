@@ -3,12 +3,25 @@ __pycache__/
 .venv/
 venv/
 .env
+# Model
 *.pt
 *.onnx
+# Dataset
 datasets/*/
 !datasets/.gitkeep
 datasets/*.png
 datasets/*.jpg
 datasets/*.jpeg
+# Training
 runs/
 *.zip
+# PyInstaller
+build/
+dist/
+*.spec
+# Logs
+*.log
+logs/
+# IDE
+.vscode/
+.idea/

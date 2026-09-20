@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import torch
 from ultralytics import YOLO
 
 
@@ -28,7 +29,7 @@ class Detection:
 
 
 class YoloDetector:
-    """Thin Ultralytics YOLO wrapper for bite + UI class queries."""
+    """YOLO wrapper cho nhận diện cắn câu và giao diện."""
 
     def __init__(
         self,
@@ -36,6 +37,7 @@ class YoloDetector:
         confidence: float = 0.5,
         bite_classes: list[str] | None = None,
         imgsz: int = 320,
+        device: str | None = None,
     ) -> None:
         path = Path(model_path)
 
@@ -45,7 +47,13 @@ class YoloDetector:
                 "Place trained weights at models/best.pt"
             )
 
-        self.model = YOLO(str(path))
+        # =====================================================
+        # LOAD MODEL
+        # =====================================================
+
+        self.model = YOLO(
+            str(path)
+        )
 
         self.confidence = confidence
 
@@ -56,9 +64,19 @@ class YoloDetector:
 
         self.imgsz = imgsz
 
-        # -----------------------------------------------------
-        # Bộ nhớ tạm để xác nhận detection ! ở confidence thấp.
-        # -----------------------------------------------------
+        # =====================================================
+        # CHỌN THIẾT BỊ
+        # =====================================================
+
+        self.device = self._select_device(
+            device
+        )
+
+        self._device_fallback_used = False
+
+        # =====================================================
+        # BỘ NHỚ TẠM XÁC NHẬN BITE
+        # =====================================================
 
         self._pending_bite: Detection | None = None
         self._pending_bite_at = 0.0
@@ -74,6 +92,10 @@ class YoloDetector:
         # Khoảng cách tâm tối đa giữa 2 frame.
         self._bite_confirm_distance = 28
 
+        # =====================================================
+        # WARMUP
+        # =====================================================
+
         dummy = np.zeros(
             (
                 self.imgsz,
@@ -83,12 +105,220 @@ class YoloDetector:
             dtype=np.uint8,
         )
 
-        self.model.predict(
+        self._predict(
             source=dummy,
             conf=0.5,
             imgsz=self.imgsz,
-            verbose=False,
         )
+
+    # =========================================================
+    # DEVICE
+    # =========================================================
+
+    def _select_device(
+        self,
+        requested: str | None,
+    ) -> str:
+        """
+        Chọn thiết bị chạy YOLO.
+
+        Nếu người dùng không chỉ định:
+
+            NVIDIA/CUDA có sẵn
+                -> cuda:0
+
+            Không có CUDA
+                -> CPU
+
+        Có thể truyền device thủ công trong tương lai:
+            "cpu"
+            "cuda:0"
+        """
+
+        # -----------------------------------------------------
+        # Người dùng ép device
+        # -----------------------------------------------------
+
+        if requested is not None:
+            normalized = str(
+                requested
+            ).strip().lower()
+
+            if normalized in (
+                "",
+                "auto",
+                "automatic",
+            ):
+                requested = None
+
+            elif normalized.startswith(
+                "cuda"
+            ):
+                if torch.cuda.is_available():
+                    print(
+                        "[ai] Thiết bị: "
+                        f"{torch.cuda.get_device_name(0)} "
+                        "(CUDA)"
+                    )
+
+                    return str(
+                        requested
+                    )
+
+                print(
+                    "[ai] CUDA không khả dụng "
+                    "→ chuyển sang CPU."
+                )
+
+                return "cpu"
+
+            else:
+                print(
+                    "[ai] Thiết bị: "
+                    f"{requested}"
+                )
+
+                return str(
+                    requested
+                )
+
+        # -----------------------------------------------------
+        # AUTO
+        # -----------------------------------------------------
+
+        try:
+            if torch.cuda.is_available():
+                gpu_name = (
+                    torch.cuda.get_device_name(0)
+                )
+
+                print(
+                    "[ai] Thiết bị: "
+                    f"{gpu_name} (CUDA)"
+                )
+
+                return "cuda:0"
+
+        except Exception as exc:
+            print(
+                "[ai] Không kiểm tra được CUDA: "
+                f"{exc}"
+            )
+
+        # -----------------------------------------------------
+        # CPU FALLBACK
+        # -----------------------------------------------------
+
+        print(
+            "[ai] Thiết bị: CPU"
+        )
+
+        return "cpu"
+
+    # =========================================================
+    # KIỂM TRA LỖI CÓ THỂ FALLBACK CPU
+    # =========================================================
+
+    def _should_fallback_to_cpu(
+        self,
+        exc: RuntimeError,
+    ) -> bool:
+        """
+        Chỉ fallback nếu lỗi có vẻ liên quan tới
+        CUDA/GPU.
+
+        Không nuốt các RuntimeError không liên quan.
+        """
+
+        if not self.device.startswith(
+            "cuda"
+        ):
+            return False
+
+        message = str(
+            exc
+        ).lower()
+
+        keywords = (
+            "cuda",
+            "cudnn",
+            "cublas",
+            "out of memory",
+            "no kernel image",
+            "device-side assert",
+            "driver",
+            "gpu",
+        )
+
+        return any(
+            keyword in message
+            for keyword in keywords
+        )
+
+    # =========================================================
+    # PREDICT
+    # =========================================================
+
+    def _predict(
+        self,
+        source,
+        *,
+        imgsz: int,
+        conf: float,
+    ):
+        """
+        Chạy YOLO với device hiện tại.
+
+        Nếu CUDA gặp lỗi thực tế:
+            CUDA -> CPU
+
+        Sau khi fallback thì những lần inference sau
+        tiếp tục dùng CPU.
+        """
+
+        try:
+            return self.model.predict(
+                source=source,
+                conf=conf,
+                imgsz=imgsz,
+                device=self.device,
+                verbose=False,
+            )
+
+        except RuntimeError as exc:
+            if not self._should_fallback_to_cpu(
+                exc
+            ):
+                raise
+
+            # -------------------------------------------------
+            # CUDA -> CPU
+            # -------------------------------------------------
+
+            if not self._device_fallback_used:
+                print(
+                    "[ai] GPU CUDA gặp lỗi:"
+                )
+
+                print(
+                    f"[ai] {exc}"
+                )
+
+                print(
+                    "[ai] Chuyển sang CPU..."
+                )
+
+                self._device_fallback_used = True
+
+            self.device = "cpu"
+
+            return self.model.predict(
+                source=source,
+                conf=conf,
+                imgsz=imgsz,
+                device="cpu",
+                verbose=False,
+            )
 
     # =========================================================
     # GENERIC DETECTION
@@ -101,7 +331,7 @@ class YoloDetector:
         imgsz: int | None = None,
         conf: float | None = None,
     ) -> list[Detection]:
-        results = self.model.predict(
+        results = self._predict(
             source=frame_bgr,
             conf=(
                 self.confidence
@@ -113,7 +343,6 @@ class YoloDetector:
                 if imgsz is None
                 else imgsz
             ),
-            verbose=False,
         )
 
         detections: list[Detection] = []
@@ -168,7 +397,7 @@ class YoloDetector:
         """
         Lọc false-positive của class exclamation-mark.
 
-        Dấu ! thật trong ROI hiện tại của bạn có đặc điểm
+        Dấu ! thật trong ROI hiện tại có đặc điểm
         tương đối ổn định:
 
             - box hẹp
@@ -216,14 +445,6 @@ class YoloDetector:
 
         # -----------------------------------------------------
         # 2. Kích thước box.
-        #
-        # Các detection ! thật trước đây:
-        #
-        #   21 x 82
-        #   22 x 81
-        #   19 x 83
-        #   21 x 102
-        #
         # -----------------------------------------------------
 
         min_width = 15
@@ -263,18 +484,6 @@ class YoloDetector:
 
         # -----------------------------------------------------
         # 4. Vùng vị trí tương đối trong ROI.
-        #
-        # Các false-positive đã thấy:
-        #
-        #   (6,7)
-        #   (428,25)
-        #   (393,59)
-        #   (389,33)
-        #   (146,50)
-        #
-        # đều nằm quá sát trên/mép.
-        #
-        # Các detection ! thật thường nằm ở vùng giữa.
         # -----------------------------------------------------
 
         if center_x < 60:
@@ -301,7 +510,8 @@ class YoloDetector:
         second: Detection,
     ) -> bool:
         """
-        Kiểm tra detection ở 2 frame có phải cùng một dấu !
+        Kiểm tra detection ở 2 frame có phải
+        cùng một dấu ! hay không.
         """
 
         x1, y1 = first.center
@@ -334,8 +544,6 @@ class YoloDetector:
             second.y2 - second.y1
         )
 
-        # Tránh trường hợp frame sau tự nhiên
-        # biến thành một box có kích thước hoàn toàn khác.
         if first_width <= 0:
             return False
 
@@ -407,7 +615,7 @@ class YoloDetector:
                 continue
 
             # -------------------------------------------------
-            # Chọn detection có confidence cao nhất.
+            # Chọn detection confidence cao nhất.
             # -------------------------------------------------
 
             if (
@@ -451,7 +659,8 @@ class YoloDetector:
         # CONFIDENCE THẤP
         #
         # Không reel ngay.
-        # Phải thấy lại detection tương tự ở frame kế tiếp.
+        # Phải thấy lại detection tương tự
+        # ở frame kế tiếp.
         # =====================================================
 
         if (
@@ -466,7 +675,6 @@ class YoloDetector:
                 self._pending_bite,
                 best,
             ):
-                # Lấy confidence cao hơn.
                 confirmed = (
                     best
                     if best.confidence
@@ -572,7 +780,9 @@ class YoloDetector:
             if key not in wanted:
                 continue
 
-            prev = found.get(key)
+            prev = found.get(
+                key
+            )
 
             if (
                 prev is None
